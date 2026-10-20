@@ -18,7 +18,10 @@ export function GatewayScreen({ initial }: { initial: GatewayResult }) {
     return (
       <>
         <SiteHeader stage />
-        <MissingCopy title="This gateway doesn't exist" body="The code is wrong, or it was deleted." />
+        <MissingCopy
+          title="This gateway doesn't exist"
+          body="The code is wrong, or it was deleted."
+        />
       </>
     );
   }
@@ -65,7 +68,8 @@ export function GatewayScreen({ initial }: { initial: GatewayResult }) {
             <p className="font-mono text-xs tracking-widest text-faint">LOCKED</p>
             <h1 className="mt-3 text-3xl font-semibold tracking-tight">{data.hostname}</h1>
             <p className="mt-3 text-sm text-muted">
-              The preview stays hidden until the password matches. {data.oneTime ? "It can be opened once." : ""}
+              The preview stays hidden until the password matches.{" "}
+              {data.oneTime ? "It can be opened once." : ""}
             </p>
             <label className="mt-6 block text-sm text-muted" htmlFor="gate-password">
               Password
@@ -88,14 +92,7 @@ export function GatewayScreen({ initial }: { initial: GatewayResult }) {
     );
   }
 
-  return (
-    <ReadyStage
-      view={data}
-      password={password}
-      onContinueError={setError}
-      error={error}
-    />
-  );
+  return <ReadyStage view={data} password={password} onContinueError={setError} error={error} />;
 }
 
 function MissingCopy({ title, body }: { title: string; body: string }) {
@@ -181,7 +178,8 @@ function ReadyStage({
     }
   }
 
-  const label = step === 0 ? "Scanning destination" : step === 1 ? "Page" : step === 2 ? "Signals" : "Ready";
+  const label =
+    step === 0 ? "Scanning destination" : step === 1 ? "Page" : step === 2 ? "Signals" : "Ready";
 
   return (
     <>
@@ -199,15 +197,23 @@ function ReadyStage({
           {step === 0 ? (
             <div className="mt-6 flex items-center gap-4">
               <Radar />
-              <p className="text-sm text-muted">Checking redirects, trackers, and the final host.</p>
+              <p className="text-sm text-muted">
+                Checking redirects, trackers, and the final host.
+              </p>
             </div>
           ) : null}
           <div className="mt-6 flex flex-wrap items-center gap-3">
             <RiskPill risk={view.risk} />
-            {view.unverified ? <span className="font-mono text-xs text-warn">Unverified</span> : null}
-            {view.oneTime ? <span className="font-mono text-xs text-warn">Burns after opening</span> : null}
+            {view.unverified ? (
+              <span className="font-mono text-xs text-warn">Unverified</span>
+            ) : null}
+            {view.oneTime ? (
+              <span className="font-mono text-xs text-warn">Burns after opening</span>
+            ) : null}
           </div>
-          <h1 className="mt-4 text-4xl font-semibold tracking-tight md:text-5xl">{view.title || view.hostname}</h1>
+          <h1 className="mt-4 text-4xl font-semibold tracking-tight md:text-5xl">
+            {view.title || view.hostname}
+          </h1>
           <p className="mt-3 font-mono text-sm text-accent-soft">
             {view.hostname}
             {view.path !== "/" ? view.path : ""}
@@ -233,7 +239,9 @@ function ReadyStage({
                 ))}
               </ul>
             ) : (
-              <p className="text-sm text-muted">No phishing signals stood out in the address or the preview.</p>
+              <p className="text-sm text-muted">
+                No phishing signals stood out in the address or the preview.
+              </p>
             )}
             <Chain hops={view.chain} />
           </div>
@@ -241,6 +249,13 @@ function ReadyStage({
             <p className="border-t border-line pt-4 text-sm leading-6">
               <span aria-hidden>{typed}</span>
               <span className="sr-only">{view.summary}</span>
+            </p>
+            <p className="mt-2 font-mono text-xs text-faint">
+              {view.summarySource === "ai"
+                ? "AI-assisted summary"
+                : view.unverified
+                  ? "Rule-based summary · preview unavailable"
+                  : "Rule-based summary · AI unavailable in this environment"}
             </p>
             <div
               ref={magnet}

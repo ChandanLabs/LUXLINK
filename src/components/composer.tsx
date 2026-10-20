@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { createLink, scanLink } from "@/lib/gateway.functions";
 import { EXPIRY_OPTIONS, type CreatePayload, type Expiry, type ScanPayload } from "@/lib/model";
 import { upsertVault } from "@/lib/vault";
-import { cn } from "@/lib/utils";
+import { cn, copyText } from "@/lib/utils";
 
 const field =
   "h-12 w-full rounded-xl border border-line bg-bg px-3 text-sm text-fg outline-none placeholder:text-faint focus-visible:outline-2 focus-visible:outline-accent";
@@ -20,6 +20,9 @@ export function Composer() {
   const [hideBrand, setHideBrand] = useState(false);
   const [busy, setBusy] = useState<"scan" | "create" | null>(null);
   const [error, setError] = useState("");
+  const [vaultNotice, setVaultNotice] = useState("");
+  const [vaultSaved, setVaultSaved] = useState(false);
+  const [copyError, setCopyError] = useState("");
   const [scan, setScan] = useState<ScanPayload | null>(null);
   const [created, setCreated] = useState<CreatePayload | null>(null);
   const [href, setHref] = useState("");
@@ -38,6 +41,7 @@ export function Composer() {
     }
     setBusy("scan");
     setError("");
+    setScan(null);
     setCreated(null);
     const started = Date.now();
     try {
@@ -64,6 +68,11 @@ export function Composer() {
     }
     setBusy("create");
     setError("");
+    setVaultNotice("");
+    setVaultSaved(false);
+    setScan(null);
+    setCreated(null);
+    setCopyError("");
     try {
       const result = await createLink({
         data: { url, customCode, password, expiry, hideBrand },
@@ -73,19 +82,26 @@ export function Composer() {
         return;
       }
       setCreated(result);
-      await upsertVault({
-        code: result.code,
-        ownerSecret: result.ownerSecret,
-        title: result.title,
-        hostname: result.hostname,
-        createdAt: new Date().toISOString(),
-        expiryAt: result.expiryAt,
-        expiry: result.expiry,
-        hasPassword: result.hasPassword,
-        oneTime: result.oneTime,
-        hideBrand: result.hideBrand,
-        risk: result.risk,
-      });
+      try {
+        await upsertVault({
+          code: result.code,
+          ownerSecret: result.ownerSecret,
+          title: result.title,
+          hostname: result.hostname,
+          createdAt: new Date().toISOString(),
+          expiryAt: result.expiryAt,
+          expiry: result.expiry,
+          hasPassword: result.hasPassword,
+          oneTime: result.oneTime,
+          hideBrand: result.hideBrand,
+          risk: result.risk,
+        });
+        setVaultSaved(true);
+      } catch (caught) {
+        setVaultNotice(
+          caught instanceof Error ? caught.message : "The encrypted vault could not be updated.",
+        );
+      }
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "The gateway wasn't created.");
     } finally {
@@ -110,7 +126,10 @@ export function Composer() {
             value={url}
             onChange={(event) => {
               setUrl(event.target.value);
+              setScan(null);
               setCreated(null);
+              setError("");
+              setCopyError("");
             }}
             onPaste={(event) => {
               const text = event.clipboardData.getData("text").trim();
@@ -161,6 +180,9 @@ export function Composer() {
               autoCapitalize="off"
               spellCheck={false}
             />
+            <span className="mt-2 block text-xs text-faint">
+              Spaces become hyphens. Use 3–32 letters, numbers, or hyphens.
+            </span>
           </label>
           <label className="block text-sm text-muted">
             Password
@@ -199,8 +221,15 @@ export function Composer() {
                 <span className="block text-fg">Hide Luxlink</span>
                 <span className="text-faint">On the shared gateway</span>
               </span>
-              <span className={cn("h-7 w-12 rounded-full p-1", hideBrand ? "bg-accent" : "bg-surface")}>
-                <span className={cn("block size-5 rounded-full bg-fg transition-transform", hideBrand && "translate-x-5")} />
+              <span
+                className={cn("h-7 w-12 rounded-full p-1", hideBrand ? "bg-accent" : "bg-surface")}
+              >
+                <span
+                  className={cn(
+                    "block size-5 rounded-full bg-fg transition-transform",
+                    hideBrand && "translate-x-5",
+                  )}
+                />
               </span>
             </button>
           </div>
@@ -209,7 +238,9 @@ export function Composer() {
           <Button onClick={() => void runCreate()} disabled={busy !== null}>
             {busy === "create" ? "Creating" : "Create gateway"}
           </Button>
-          <p className="text-xs text-faint">Early access features are included. Nothing here requires an account.</p>
+          <p className="text-xs text-faint">
+            Early access features are included. Nothing here requires an account.
+          </p>
         </div>
       </form>
 
@@ -217,7 +248,9 @@ export function Composer() {
         <div className="mt-6 flex items-center gap-4" aria-live="polite">
           <Radar />
           <p className="font-mono text-sm text-muted">
-            {busy === "scan" ? "Reading the page, redirects, and tracker signals." : "Saving a gateway that can expire."}
+            {busy === "scan"
+              ? "Reading the page, redirects, and tracker signals."
+              : "Saving a gateway that can expire."}
           </p>
         </div>
       ) : null}
@@ -229,13 +262,18 @@ export function Composer() {
       ) : null}
 
       {scan && !busy ? (
-        <article className="mt-6 rounded-2xl border border-line bg-bg p-4 sm:p-5" aria-live="polite">
+        <article
+          className="mt-6 rounded-2xl border border-line bg-bg p-4 sm:p-5"
+          aria-live="polite"
+        >
           <div className="flex flex-wrap items-center gap-3">
             <RiskPill risk={scan.risk} />
             <span className="font-mono text-xs text-faint">
               {scan.trackerCount} tracker {scan.trackerCount === 1 ? "family" : "families"}
             </span>
-            {scan.unverified ? <span className="font-mono text-xs text-warn">Unverified preview</span> : null}
+            {scan.unverified ? (
+              <span className="font-mono text-xs text-warn">Unverified preview</span>
+            ) : null}
           </div>
           <h3 className="mt-4 text-2xl font-semibold tracking-tight">{scan.title}</h3>
           <p className="mt-1 font-mono text-sm text-accent-soft">{scan.finalUrl}</p>
@@ -251,6 +289,13 @@ export function Composer() {
             <Chain hops={scan.chain} />
           </div>
           <p className="mt-4 border-t border-line pt-4 text-sm leading-6">{scan.summary}</p>
+          <p className="mt-2 font-mono text-xs text-faint">
+            {scan.summarySource === "ai"
+              ? "AI-assisted summary"
+              : scan.unverified
+                ? "Rule-based summary · preview unavailable"
+                : "Rule-based summary · AI unavailable in this environment"}
+          </p>
           {scan.image ? (
             <img
               src={scan.image}
@@ -267,17 +312,31 @@ export function Composer() {
           <QrMark value={href || `/${created.code}`} />
           <div>
             <p className="font-mono text-xs tracking-widest text-safe">GATEWAY READY</p>
-            <p className="mt-2 break-all font-mono text-lg text-fg">{href || `/${created.code}`}</p>
+            <label className="mt-2 block text-xs text-muted">
+              Gateway link
+              <input
+                readOnly
+                value={href || `/${created.code}`}
+                onFocus={(event) => event.currentTarget.select()}
+                className={cn(field, "mt-2 select-all font-mono text-sm")}
+                aria-label="Gateway link"
+              />
+            </label>
             <div className="mt-4 flex flex-wrap gap-2">
               <Button
                 onClick={() => {
-                  const text = href || `/${created.code}`;
-                  void navigator.clipboard.writeText(text).then(
+                  setCopyError("");
+                  void copyText(href || `/${created.code}`).then(
                     () => {
                       setCopied(true);
                       window.setTimeout(() => setCopied(false), 1600);
                     },
-                    () => setCopied(false),
+                    () => {
+                      setCopied(false);
+                      setCopyError(
+                        "Clipboard access was blocked. Select the gateway link above to copy it.",
+                      );
+                    },
                   );
                 }}
               >
@@ -304,10 +363,40 @@ export function Composer() {
                 Download card
               </Button>
             </div>
-            <p className="mt-3 text-xs text-faint">Saved in the encrypted vault on this device.</p>
+            <p className="mt-3 text-xs text-faint">
+              {vaultSaved
+                ? "Saved in the encrypted vault on this device."
+                : `Gateway created, but its owner key was not saved. ${vaultNotice}`}
+            </p>
+            {copyError ? (
+              <p className="mt-2 text-sm text-warn" role="status">
+                {copyError}
+              </p>
+            ) : null}
+            {!vaultSaved ? (
+              <details className="mt-3 rounded-xl border border-line p-3">
+                <summary className="cursor-pointer text-sm text-muted">
+                  Back up the owner key securely
+                </summary>
+                <p className="mt-2 text-xs text-faint">
+                  This key controls gateway analytics and deletion. Save it somewhere private.
+                </p>
+                <input
+                  readOnly
+                  value={created.ownerSecret}
+                  onFocus={(event) => event.currentTarget.select()}
+                  className={cn(field, "mt-2 select-all font-mono text-xs")}
+                  aria-label="Gateway owner key"
+                />
+              </details>
+            ) : null}
           </div>
           <div className="sm:col-span-2">
-            <BrandCard title={created.title} hostname={created.hostname} hideBrand={created.hideBrand} />
+            <BrandCard
+              title={created.title}
+              hostname={created.hostname}
+              hideBrand={created.hideBrand}
+            />
           </div>
         </article>
       ) : null}
