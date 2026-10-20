@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as CodeRouteImport } from './routes/$code'
+import { Route as CodeFixRouteImport } from './routes/code-fix'
 import { Route as DashboardRouteImport } from './routes/dashboard'
 import { Route as PCodeRouteImport } from './routes/p/$code'
 
@@ -22,6 +23,11 @@ const IndexRoute = IndexRouteImport.update({
 const CodeRoute = CodeRouteImport.update({
   id: '/$code',
   path: '/$code',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CodeFixRoute = CodeFixRouteImport.update({
+  id: '/code-fix',
+  path: '/code-fix',
   getParentRoute: () => rootRouteImport,
 } as any)
 const DashboardRoute = DashboardRouteImport.update({
@@ -38,12 +44,14 @@ const PCodeRoute = PCodeRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/$code': typeof CodeRoute
+  '/code-fix': typeof CodeFixRoute
   '/dashboard': typeof DashboardRoute
   '/p/$code': typeof PCodeRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/$code': typeof CodeRoute
+  '/code-fix': typeof CodeFixRoute
   '/dashboard': typeof DashboardRoute
   '/p/$code': typeof PCodeRoute
 }
@@ -51,20 +59,22 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/$code': typeof CodeRoute
+  '/code-fix': typeof CodeFixRoute
   '/dashboard': typeof DashboardRoute
   '/p/$code': typeof PCodeRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/$code' | '/dashboard' | '/p/$code'
+  fullPaths: '/' | '/$code' | '/code-fix' | '/dashboard' | '/p/$code'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/$code' | '/dashboard' | '/p/$code'
-  id: '__root__' | '/' | '/$code' | '/dashboard' | '/p/$code'
+  to: '/' | '/$code' | '/code-fix' | '/dashboard' | '/p/$code'
+  id: '__root__' | '/' | '/$code' | '/code-fix' | '/dashboard' | '/p/$code'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   CodeRoute: typeof CodeRoute
+  CodeFixRoute: typeof CodeFixRoute
   DashboardRoute: typeof DashboardRoute
   PCodeRoute: typeof PCodeRoute
 }
@@ -83,6 +93,13 @@ declare module '@tanstack/react-router' {
       path: '/$code'
       fullPath: '/$code'
       preLoaderRoute: typeof CodeRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/code-fix': {
+      id: '/code-fix'
+      path: '/code-fix'
+      fullPath: '/code-fix'
+      preLoaderRoute: typeof CodeFixRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/dashboard': {
@@ -105,6 +122,7 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   CodeRoute: CodeRoute,
+  CodeFixRoute: CodeFixRoute,
   DashboardRoute: DashboardRoute,
   PCodeRoute: PCodeRoute,
 }

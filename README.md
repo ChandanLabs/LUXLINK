@@ -32,19 +32,21 @@ The project combines server-side URL inspection and expiring gateway records wit
 
 ## Features
 
-| Capability                   | What it does                                                                                                                                                                         |
-| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Link inspection**          | Reads available page metadata, follows and displays redirect hops, and checks for known tracker families.                                                                            |
-| **Risk signals**             | Highlights suspicious patterns and explains when a destination could not be verified. Treat the result as guidance, not a guarantee.                                                 |
-| **Consent-first gateway**    | Shares a short link that shows destination context before a visitor chooses to continue.                                                                                             |
-| **Expiry controls**          | Choose a lifetime or configure a gateway to burn after one opening.                                                                                                                  |
-| **Optional password gate**   | Require a password before showing the gateway preview. Password verifiers are stored as hashes, not plaintext.                                                                       |
-| **Custom link names**        | Create memorable gateway codes for sharing.                                                                                                                                          |
-| **Privacy-minded analytics** | View aggregate click, country, and device counts for a gateway. The app does not store raw IP addresses as click analytics.                                                          |
-| **Encrypted local vault**    | Keep created gateway details in this browser, protected with Web Crypto AES-GCM. Import or export a vault when needed. The vault is device-local; it does not sync between browsers. |
-| **QR codes and share cards** | Make a gateway easier to open and share, including a branded card when destination artwork is unavailable.                                                                           |
-| **Interactive walkthrough**  | Preview the inspect → verify → protect flow in the animated product demo on the landing page.                                                                                        |
-| **Responsive interface**     | Use the app on desktop or mobile, with reduced-motion preferences respected.                                                                                                         |
+| Capability                   | What it does                                                                                                                                                                                                          |
+| ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Link inspection**          | Reads available page metadata, follows and displays redirect hops, and checks for known tracker families.                                                                                                             |
+| **Risk signals**             | Highlights suspicious patterns and explains when a destination could not be verified. Treat the result as guidance, not a guarantee.                                                                                  |
+| **Consent-first gateway**    | Shares a short link that shows destination context before a visitor chooses to continue.                                                                                                                              |
+| **Expiry controls**          | Choose a lifetime or configure a gateway to burn after one opening.                                                                                                                                                   |
+| **Optional password gate**   | Require a password before showing the gateway preview. Password verifiers are stored as hashes, not plaintext.                                                                                                        |
+| **Custom link names**        | Create memorable gateway codes for sharing; spaces are converted to hyphens.                                                                                                                                          |
+| **Privacy-minded analytics** | View aggregate click, country, and device counts for a gateway. The app does not store raw IP addresses as click analytics.                                                                                           |
+| **Encrypted local vault**    | Keep created gateway details in this browser, protected with Web Crypto AES-GCM. Import or export a vault when needed. The vault is device-local; it does not sync between browsers, and requires HTTPS or localhost. |
+| **Optional AI summaries**    | Use server-side xAI summaries when configured. If AI is unavailable, Luxlink labels the transparent rule-based fallback instead of presenting it as AI output.                                                        |
+| **Grok code fix**            | Submit a JavaScript snippet for a correction and explanation with Grok 4.7. Requests are user-triggered, rate-limited, and not saved by Luxlink.                                                                        |
+| **QR codes and share cards** | Make a gateway easier to open and share, including a branded card when destination artwork is unavailable.                                                                                                            |
+| **Interactive walkthrough**  | Preview the inspect → verify → protect flow in the animated product demo on the landing page.                                                                                                                         |
+| **Responsive interface**     | Use the app on desktop or mobile, with reduced-motion preferences respected.                                                                                                                                          |
 
 ## How it works
 
@@ -124,7 +126,9 @@ No environment file is required for the local PGlite fallback. Set optional vari
 | Variable       | Required                                                        | Purpose                                                                                                           |
 | -------------- | --------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
 | `DATABASE_URL` | No for local development; recommended for persistent deployment | PostgreSQL connection string. If omitted, the app uses an in-memory PGlite database.                              |
-| `XAI_API_KEY`  | No                                                              | Enables optional server-side AI summaries. Keep this secret on the server; never expose it as a `VITE_` variable. |
+| `XAI_API_KEY`  | No                                                              | Enables server-side AI summaries and the Grok code-fix tool. Keep it server-side; never expose it as a `VITE_` variable. |
+
+When `XAI_API_KEY` is missing or the provider cannot be reached, scans continue with a clearly labeled rule-based summary; the code-fix tool reports that Grok is unavailable. Code submitted to the code-fix tool is sent to xAI with response storage disabled and is not saved by Luxlink.
 
 PowerShell example for the current terminal session:
 
@@ -134,7 +138,7 @@ $env:XAI_API_KEY = "your-server-side-api-key"
 npm run dev
 ```
 
-For deployment, configure production environment variables in the hosting provider and connect the GitHub repository. Verify that the database is persistent and that migrations have completed before sharing the deployment URL.
+For deployment, configure production environment variables in the hosting provider and connect the GitHub repository. To use the Neon `luxlink` project, set `DATABASE_URL` to its pooled connection string in the hosting provider's server-side environment settings; never put that secret in source control. Verify that the database is persistent and that migrations have completed before sharing the deployment URL.
 
 ## Available scripts
 

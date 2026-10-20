@@ -1,4 +1,5 @@
 export type Risk = "safe" | "caution" | "danger";
+export type SummarySource = "ai" | "rules";
 
 export type Expiry = "ONE_VIEW" | "ONE_HOUR" | "ONE_DAY" | "SEVEN_DAYS";
 
@@ -25,6 +26,7 @@ export type ScanPayload = {
   risk: Risk;
   reasons: string[];
   summary: string;
+  summarySource: SummarySource;
   unverified: boolean;
 };
 
@@ -59,6 +61,7 @@ export type GatewayReady = {
   risk: Risk;
   reasons: string[];
   summary: string;
+  summarySource: SummarySource;
   hasPassword: boolean;
   oneTime: boolean;
   hideBrand: boolean;
@@ -85,7 +88,8 @@ export type GatewayGone = {
   reason: "expired" | "opened";
 };
 
-export type GatewayResult = GatewayReady | GatewayLocked | GatewayGone | { ok: false; status: "missing" };
+export type GatewayResult =
+  GatewayReady | GatewayLocked | GatewayGone | { ok: false; status: "missing" };
 
 export type ContinuePayload = { ok: true; url: string; blocked: boolean } | Fail;
 

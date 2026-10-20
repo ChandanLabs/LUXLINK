@@ -8,8 +8,15 @@ import { SiteHeader } from "@/components/site-header";
 import { Button } from "@/components/ui/button";
 import { destroyLink, linkAnalytics } from "@/lib/gateway.functions";
 import { EXPIRY_OPTIONS, type AnalyticsPayload, type VaultLink } from "@/lib/model";
-import { downloadVault, loadVault, parseVaultImport, removeVault, resetVault, saveVault } from "@/lib/vault";
-import { cn, formatWhen } from "@/lib/utils";
+import {
+  downloadVault,
+  loadVault,
+  parseVaultImport,
+  removeVault,
+  resetVault,
+  saveVault,
+} from "@/lib/vault";
+import { cn, copyText, formatWhen } from "@/lib/utils";
 
 export const Route = createFileRoute("/dashboard")({
   head: () => ({ meta: [{ title: "Vault · Luxlink" }] }),
@@ -78,7 +85,10 @@ function DashboardPage() {
     try {
       const text = await file.text();
       const incoming = parseVaultImport(text);
-      const merged = [...incoming, ...links.filter((item) => !incoming.some((row) => row.code === item.code))].slice(0, 200);
+      const merged = [
+        ...incoming,
+        ...links.filter((item) => !incoming.some((row) => row.code === item.code)),
+      ].slice(0, 200);
       await saveVault(merged);
       setLinks(merged);
       setSelected(merged[0]?.code ?? null);
@@ -96,8 +106,8 @@ function DashboardPage() {
         <div className="rounded-3xl border border-accent/40 bg-raised px-5 py-4">
           <p className="font-mono text-xs tracking-widest text-accent-soft">EARLY ACCESS</p>
           <p className="mt-2 text-sm text-muted">
-            Premium is unlocked. Custom names, passwords, self-destruct, cards, and counts are free. This list never
-            leaves the browser.
+            Premium is unlocked. Custom names, passwords, self-destruct, cards, and counts are free.
+            This list never leaves the browser.
           </p>
         </div>
 
@@ -138,7 +148,8 @@ function DashboardPage() {
 
         {ready && broken ? (
           <p className="mt-10 max-w-md text-sm text-muted">
-            The encrypted vault on this device could not be read. Reset it only if you have an export.
+            The encrypted vault on this device could not be read. Reset it only if you have an
+            export.
           </p>
         ) : null}
 
@@ -146,7 +157,9 @@ function DashboardPage() {
           <div className="mt-16 max-w-md">
             <div className="radar" aria-hidden />
             <h1 className="mt-6 text-3xl font-semibold tracking-tight">Paste your first link</h1>
-            <p className="mt-3 text-muted">Gateways you create show up here, on this browser only.</p>
+            <p className="mt-3 text-muted">
+              Gateways you create show up here, on this browser only.
+            </p>
             <Link
               to="/"
               className="mt-6 inline-flex h-11 items-center rounded-full bg-fg px-5 text-sm font-semibold text-bg"
@@ -166,7 +179,9 @@ function DashboardPage() {
                     onClick={() => setSelected(item.code)}
                     className={cn(
                       "w-full rounded-2xl border px-4 py-4 text-left transition-colors",
-                      item.code === current?.code ? "border-accent bg-raised" : "border-line bg-bg hover:bg-raised",
+                      item.code === current?.code
+                        ? "border-accent bg-raised"
+                        : "border-line bg-bg hover:bg-raised",
                     )}
                   >
                     <div className="flex items-center justify-between gap-3">
@@ -188,7 +203,9 @@ function DashboardPage() {
               <section className="h-fit rounded-3xl border border-line bg-raised p-5 lg:sticky lg:top-24">
                 <div className="flex items-start justify-between gap-4">
                   <div>
-                    <h1 className="text-2xl font-semibold tracking-tight">{current.title || current.hostname}</h1>
+                    <h1 className="text-2xl font-semibold tracking-tight">
+                      {current.title || current.hostname}
+                    </h1>
                     <p className="mt-1 font-mono text-sm text-muted">{current.hostname}</p>
                   </div>
                   <QrMark value={href || `/${current.code}`} />
@@ -199,7 +216,11 @@ function DashboardPage() {
                   <Button
                     onClick={() => {
                       const text = href || `/${current.code}`;
-                      void navigator.clipboard.writeText(text).then(() => setNotice("Copied.")).catch(() => setNotice("Copy failed."));
+                      void copyText(text)
+                        .then(() => setNotice("Copied."))
+                        .catch(() =>
+                          setNotice("Copy was blocked. Select the link above to copy it manually."),
+                        );
                     }}
                   >
                     Copy
@@ -226,7 +247,11 @@ function DashboardPage() {
                   </Button>
                 </div>
                 <div className="mt-6">
-                  <BrandCard title={current.title} hostname={current.hostname} hideBrand={current.hideBrand} />
+                  <BrandCard
+                    title={current.title}
+                    hostname={current.hostname}
+                    hideBrand={current.hideBrand}
+                  />
                 </div>
                 <div className="mt-6 grid gap-5">
                   <div>
@@ -249,11 +274,21 @@ function DashboardPage() {
                   <Button
                     variant="ghost"
                     onClick={() => {
-                      void removeVault(current.code).then((next) => {
-                        setLinks(next);
-                        setSelected(next[0]?.code ?? null);
-                        setNotice("Removed from this device. The gateway still works until it expires.");
-                      });
+                      void removeVault(current.code)
+                        .then((next) => {
+                          setLinks(next);
+                          setSelected(next[0]?.code ?? null);
+                          setNotice(
+                            "Removed from this device. The gateway still works until it expires.",
+                          );
+                        })
+                        .catch((error) => {
+                          setNotice(
+                            error instanceof Error
+                              ? error.message
+                              : "The gateway could not be removed.",
+                          );
+                        });
                     }}
                   >
                     Remove from vault
@@ -261,19 +296,35 @@ function DashboardPage() {
                   {confirming ? (
                     <Button
                       onClick={() => {
-                        void destroyLink({ data: { code: current.code, ownerSecret: current.ownerSecret } }).then(
-                          async (result) => {
+                        void destroyLink({
+                          data: { code: current.code, ownerSecret: current.ownerSecret },
+                        })
+                          .then(async (result) => {
                             if (!result.ok) {
                               setNotice(result.error);
                               return;
                             }
-                            const next = await removeVault(current.code);
-                            setLinks(next);
-                            setSelected(next[0]?.code ?? null);
-                            setNotice("Gateway deleted.");
-                            setConfirming(false);
-                          },
-                        );
+                            try {
+                              const next = await removeVault(current.code);
+                              setLinks(next);
+                              setSelected(next[0]?.code ?? null);
+                              setNotice("Gateway deleted.");
+                              setConfirming(false);
+                            } catch (error) {
+                              setNotice(
+                                error instanceof Error
+                                  ? `Gateway deleted, but its vault entry could not be removed: ${error.message}`
+                                  : "Gateway deleted, but its vault entry could not be removed.",
+                              );
+                            }
+                          })
+                          .catch((error) => {
+                            setNotice(
+                              error instanceof Error
+                                ? error.message
+                                : "The gateway could not be deleted.",
+                            );
+                          });
                       }}
                     >
                       Confirm delete

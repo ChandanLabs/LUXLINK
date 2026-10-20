@@ -17,6 +17,11 @@ function b64ToBytes(value: string) {
 }
 
 async function vaultKey() {
+  if (!globalThis.crypto?.subtle) {
+    throw new Error(
+      "Encrypted vault storage requires a secure browser context, such as HTTPS or localhost.",
+    );
+  }
   const existing = localStorage.getItem(KEY);
   if (existing) {
     return crypto.subtle.importKey("raw", b64ToBytes(existing), "AES-GCM", false, [
@@ -69,14 +74,14 @@ export async function saveVault(items: VaultLink[]) {
 }
 
 export async function upsertVault(item: VaultLink) {
-  const items = await loadVault().catch(() => [] as VaultLink[]);
+  const items = await loadVault();
   const next = [item, ...items.filter((row) => row.code !== item.code)].slice(0, 200);
   await saveVault(next);
   return next;
 }
 
 export async function removeVault(code: string) {
-  const items = await loadVault().catch(() => [] as VaultLink[]);
+  const items = await loadVault();
   const next = items.filter((row) => row.code !== code);
   await saveVault(next);
   return next;

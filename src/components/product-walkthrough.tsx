@@ -1,5 +1,14 @@
 import { useEffect, useState } from "react";
-import { ArrowUpRight, Check, LockKeyhole, Pause, Play, RotateCcw, ScanSearch, ShieldCheck } from "lucide-react";
+import {
+  ArrowUpRight,
+  Check,
+  LockKeyhole,
+  Pause,
+  Play,
+  RotateCcw,
+  ScanSearch,
+  ShieldCheck,
+} from "lucide-react";
 
 const FRAMES = [
   {
@@ -32,7 +41,10 @@ export function ProductWalkthrough() {
 
   useEffect(() => {
     if (!playing || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-    const timer = window.setInterval(() => setFrame((current) => (current + 1) % FRAMES.length), 3600);
+    const timer = window.setInterval(
+      () => setFrame((current) => (current + 1) % FRAMES.length),
+      3600,
+    );
     return () => window.clearInterval(timer);
   }, [playing]);
 
@@ -51,7 +63,10 @@ export function ProductWalkthrough() {
         <span className="font-mono text-xs text-faint">00:12</span>
       </div>
 
-      <div className={`film-window film-frame-${frame}`} aria-label="Animated Luxlink product walkthrough">
+      <div
+        className={`film-window film-frame-${frame}`}
+        aria-label="Animated Luxlink product walkthrough"
+      >
         <div className="film-browser-bar">
           <div className="flex items-center gap-1.5" aria-hidden="true">
             <span className="size-2 rounded-full bg-danger/80" />
@@ -67,20 +82,28 @@ export function ProductWalkthrough() {
 
         <div className="film-content" aria-live="polite">
           <div className="film-topline">
-            <span className="font-mono text-xs tracking-widest text-accent-soft">LUXLINK / GATEWAY</span>
+            <span className="font-mono text-xs tracking-widest text-accent-soft">
+              LUXLINK / GATEWAY
+            </span>
             <span className="flex items-center gap-1.5 font-mono text-xs text-faint">
               <span className="film-live-dot" />
-              LIVE PREVIEW
+              DEMO IN MOTION
             </span>
           </div>
 
           <div className="film-scan-card">
             <div className="flex items-center gap-3">
               <div className="film-scan-icon">
-                {frame === 0 ? <ScanSearch className="size-5" /> : <ShieldCheck className="size-5" />}
+                {frame === 0 ? (
+                  <ScanSearch className="size-5" />
+                ) : (
+                  <ShieldCheck className="size-5" />
+                )}
               </div>
               <div className="min-w-0 flex-1">
-                <p className="font-mono text-xs uppercase tracking-wider text-faint">{active.status}</p>
+                <p className="font-mono text-xs uppercase tracking-wider text-faint">
+                  {active.status}
+                </p>
                 <p className="mt-1 truncate text-sm font-medium text-fg">{active.address}</p>
               </div>
               {frame > 0 ? <Check className="size-4 shrink-0 text-safe" /> : null}
@@ -163,6 +186,7 @@ export function ProductWalkthrough() {
           </button>
         </div>
       </div>
+      <p className="film-caption">Illustrative product animation · no scan is running</p>
     </div>
   );
 }

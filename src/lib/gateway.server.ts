@@ -1,4 +1,5 @@
 import { getSql } from "@/lib/db";
+import { allowRateLimitedRequest, requestClientKey } from "@/lib/request-rate-limit.server";
 import type {
   AnalyticsPayload,
   ContinuePayload,
@@ -9,6 +10,7 @@ import type {
   GatewayResult,
   Risk,
   ScanPayload,
+  SummarySource,
 } from "@/lib/model";
 
 class GatewayError extends Error {
@@ -23,6 +25,7 @@ class GatewayError extends Error {
 const CODE_RE = /^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$/;
 const RESERVED = new Set([
   "dashboard",
+  "code-fix",
   "api",
   "assets",
   "auth",
@@ -55,7 +58,8 @@ const BRANDS = [
   "icici",
   "sbi",
 ];
-const PHISH = /\b(login|signin|sign-in|verify|verification|wallet|seed|suspend|unlock|password|otp|kyc|invoice|billing)\b/i;
+const PHISH =
+  /\b(login|signin|sign-in|verify|verification|wallet|seed|suspend|unlock|password|otp|kyc|invoice|billing)\b/i;
 const BAD_TLD = /\.(zip|mov|tk|ml|ga|cf|gq|rest)$/i;
 const TRACKERS: [string, RegExp][] = [
   ["Meta pixel", /connect\.facebook\.net|fbevents\.js|facebook\.com\/tr/i],
@@ -102,10 +106,9 @@ const COUNTRIES: Record<string, string> = {
   AE2: "UAE",
 };
 
-const buckets = new Map<string, number[]>();
 const seenClicks = new Map<string, number>();
 const passFails = new Map<string, { n: number; at: number }>();
-const summaryCache = new Map<string, { at: number; text: string }>();
+const summaryCache = new Map<string, { at: number; text: string; source: SummarySource }>();
 
 type Inspected = {
   url: string;
@@ -120,6 +123,7 @@ type Inspected = {
   risk: Risk;
   reasons: string[];
   summary: string;
+  summarySource: SummarySource;
   unverified: boolean;
 };
 
@@ -137,6 +141,7 @@ type LinkRow = {
   risk: string;
   reasons: string;
   summary: string;
+  summary_source: string;
   pass_hash: string | null;
   pass_salt: string | null;
   owner_hash: string;
@@ -172,35 +177,6 @@ function parseList(value: string) {
 
 function asRisk(value: string): Risk {
   return value === "danger" || value === "caution" ? value : "safe";
-}
-
-async function clientKey() {
-  const { createHash } = await import("node:crypto");
-  let ip = "local";
-  try {
-    const { getRequestIP } = await import("@tanstack/react-start/server");
-    ip = getRequestIP({ xForwardedFor: true }) || "local";
-  } catch {
-    ip = "local";
-  }
-  return createHash("sha256").update(ip).digest("hex").slice(0, 20);
-}
-
-async function allow(bucket: string, limit: number) {
-  const key = `${bucket}:${await clientKey()}`;
-  const now = Date.now();
-  const recent = (buckets.get(key) ?? []).filter((stamp) => now - stamp < 60_000);
-  if (recent.length >= limit) {
-    buckets.set(key, recent);
-    return false;
-  }
-  recent.push(now);
-  buckets.set(key, recent);
-  if (buckets.size > 4000) {
-    const oldest = buckets.keys().next().value;
-    if (oldest) buckets.delete(oldest);
-  }
-  return true;
 }
 
 function limited(): Fail {
@@ -239,7 +215,8 @@ function isPrivateIp(ip: string) {
 
 function hostBlocked(host: string) {
   const name = host.toLowerCase().replace(/\.$/, "");
-  if (!name || name === "localhost" || name.endsWith(".localhost") || name.endsWith(".local")) return true;
+  if (!name || name === "localhost" || name.endsWith(".localhost") || name.endsWith(".local"))
+    return true;
   if (name.endsWith(".internal") || name === "metadata.google.internal") return true;
   if (/^\d+$/.test(name) || /^0x[0-9a-f]+$/i.test(name)) return true;
   return false;
@@ -337,7 +314,8 @@ function safeAsset(raw: string | null, base: string) {
   try {
     const url = new URL(decodeEntities(raw), base);
     if (url.protocol !== "http:" && url.protocol !== "https:") return null;
-    if (url.username || url.password || hostBlocked(url.hostname) || isPrivateIp(url.hostname)) return null;
+    if (url.username || url.password || hostBlocked(url.hostname) || isPrivateIp(url.hostname))
+      return null;
     if (url.href.length > 1000) return null;
     return url.href;
   } catch {
@@ -376,11 +354,13 @@ function assess(input: {
   if (ipHost) reasons.push("The destination is a raw IP address.");
   if (BAD_TLD.test(host)) reasons.push("This domain ending is a common scam signal.");
   if (host.startsWith("xn--")) reasons.push("The domain uses punycode, which can hide lookalikes.");
-  if ((host.match(/-/g) ?? []).length >= 3) reasons.push("The domain has an unusual number of hyphens.");
+  if ((host.match(/-/g) ?? []).length >= 3)
+    reasons.push("The domain has an unusual number of hyphens.");
   if (lookalike) reasons.push("The name imitates a well-known brand.");
   if (url.protocol === "http:") reasons.push("The connection is not encrypted.");
   if (input.hops >= 4) reasons.push("The link takes a long chain of redirects.");
-  if (input.trackers >= 4) reasons.push(`${input.trackers} tracker families were found in the page.`);
+  if (input.trackers >= 4)
+    reasons.push(`${input.trackers} tracker families were found in the page.`);
   if (input.file) reasons.push("This is a direct file, so there is no page preview.");
   const urgent = PHISH.test(words);
   const odd =
@@ -396,7 +376,12 @@ function assess(input: {
   return { risk, reasons: reasons.slice(0, 4) };
 }
 
-function heuristicSummary(input: { hostname: string; title: string; risk: Risk; unverified: boolean }) {
+function heuristicSummary(input: {
+  hostname: string;
+  title: string;
+  risk: Risk;
+  unverified: boolean;
+}) {
   if (input.unverified) {
     return "The page didn't answer a preview, so this gateway is unverified. Continue only if you already trust the address.";
   }
@@ -420,11 +405,13 @@ async function summarize(input: {
   risk: Risk;
   hostname: string;
   unverified: boolean;
-}) {
-  const fallback = heuristicSummary(input);
+}): Promise<{ text: string; source: SummarySource }> {
+  const fallback = { text: heuristicSummary(input), source: "rules" as const };
   if (input.unverified) return fallback;
   const cached = summaryCache.get(input.finalUrl);
-  if (cached && Date.now() - cached.at < 10 * 60_000) return cached.text;
+  if (cached && Date.now() - cached.at < 10 * 60_000) {
+    return { text: cached.text, source: cached.source };
+  }
   const apiKey = process.env.XAI_API_KEY;
   if (!apiKey) return fallback;
   const url = new URL(input.finalUrl);
@@ -457,13 +444,14 @@ async function summarize(input: {
     const body = (await res.json()) as { choices?: { message?: { content?: string } }[] };
     const text = body.choices?.[0]?.message?.content?.replace(/\s+/g, " ").trim().slice(0, 280);
     if (!text) return fallback;
-    if (input.risk === "danger" && /\b(safe|legitimate|trusted|harmless)\b/i.test(text)) return fallback;
-    summaryCache.set(input.finalUrl, { at: Date.now(), text });
+    if (input.risk === "danger" && /\b(safe|legitimate|trusted|harmless)\b/i.test(text))
+      return fallback;
+    summaryCache.set(input.finalUrl, { at: Date.now(), text, source: "ai" });
     if (summaryCache.size > 80) {
       const oldest = summaryCache.keys().next().value;
       if (oldest) summaryCache.delete(oldest);
     }
-    return text;
+    return { text, source: "ai" };
   } catch {
     return fallback;
   }
@@ -521,7 +509,8 @@ async function fetchPage(start: string) {
       return { finalUrl: current, chain, html: "", file: true };
     }
     const buffer = await res.arrayBuffer();
-    if (buffer.byteLength > 5_000_000) throw new GatewayError("The page is larger than 5 MB.", false);
+    if (buffer.byteLength > 5_000_000)
+      throw new GatewayError("The page is larger than 5 MB.", false);
     const html = new TextDecoder("utf-8", { fatal: false }).decode(buffer).slice(0, 600_000);
     return { finalUrl: current, chain, html, file: false };
   }
@@ -548,6 +537,7 @@ function unverified(url: string, message: string): Inspected {
       risk: "caution",
       unverified: true,
     }),
+    summarySource: "rules",
     unverified: true,
   };
 }
@@ -558,11 +548,16 @@ async function inspect(input: string): Promise<Inspected> {
     const page = await fetchPage(normalized);
     const html = page.html;
     const titleTag = html.match(/<title[^>]*>([^<]{1,200})<\/title>/i)?.[1] ?? "";
-    const title = (pickMeta(html, "og:title") || decodeEntities(titleTag) || new URL(page.finalUrl).hostname).slice(
-      0,
-      180,
-    );
-    const description = (pickMeta(html, "og:description") || pickMeta(html, "description") || "").slice(0, 280);
+    const title = (
+      pickMeta(html, "og:title") ||
+      decodeEntities(titleTag) ||
+      new URL(page.finalUrl).hostname
+    ).slice(0, 180);
+    const description = (
+      pickMeta(html, "og:description") ||
+      pickMeta(html, "description") ||
+      ""
+    ).slice(0, 280);
     const families = TRACKERS.filter(([, pattern]) => pattern.test(html));
     const verdict = assess({
       finalUrl: page.finalUrl,
@@ -596,7 +591,8 @@ async function inspect(input: string): Promise<Inspected> {
       trackerCount: families.length,
       risk: verdict.risk,
       reasons: verdict.reasons,
-      summary,
+      summary: summary.text,
+      summarySource: summary.source,
       unverified: false,
     };
   } catch (error) {
@@ -623,6 +619,7 @@ function toScan(row: Inspected): ScanPayload {
     risk: row.risk,
     reasons: row.reasons,
     summary: row.summary,
+    summarySource: row.summarySource,
     unverified: row.unverified,
   };
 }
@@ -641,7 +638,9 @@ const DEMO_SAFE: GatewayReady = {
   trackerCount: 0,
   risk: "safe",
   reasons: [],
-  summary: "This demonstration opens the Wikipedia article on URLs. Nothing about it looks unusual.",
+  summary:
+    "This demonstration opens the Wikipedia article on URLs. Nothing about it looks unusual.",
+  summarySource: "rules",
   hasPassword: false,
   oneTime: false,
   hideBrand: false,
@@ -661,7 +660,12 @@ const DEMO_RISK: GatewayReady = {
   favicon: null,
   hostname: "paypa1-secure-login.example",
   path: "/verify",
-  chain: ["wa.me/forward", "bit.ly/inv-204", "tinyurl.com/pay-now", "paypa1-secure-login.example/verify"],
+  chain: [
+    "wa.me/forward",
+    "bit.ly/inv-204",
+    "tinyurl.com/pay-now",
+    "paypa1-secure-login.example/verify",
+  ],
   trackerCount: 6,
   risk: "danger",
   reasons: [
@@ -670,7 +674,9 @@ const DEMO_RISK: GatewayReady = {
     "The link takes a long chain of redirects.",
     "6 tracker families were found in the page.",
   ],
-  summary: "This demonstration is a phishing pattern: a payment brand lookalike asking you to verify an account. No real site is opened.",
+  summary:
+    "This demonstration is a phishing pattern: a payment brand lookalike asking you to verify an account. No real site is opened.",
+  summarySource: "rules",
   hasPassword: false,
   oneTime: false,
   hideBrand: false,
@@ -690,7 +696,7 @@ async function readLink(code: string) {
   const sql = await getSql();
   const rows = await sql<LinkRow>`
     select code, url, title, description, image, favicon, hostname, path, chain,
-           tracker_count, risk, reasons, summary, pass_hash, pass_salt, owner_hash,
+           tracker_count, risk, reasons, summary, summary_source, pass_hash, pass_salt, owner_hash,
            expiry_at, is_one_time, consumed, clicks, hide_brand, unverified
     from links
     where code = ${code}
@@ -721,6 +727,7 @@ function readyFrom(row: LinkRow): GatewayReady {
     risk: asRisk(row.risk),
     reasons: parseList(row.reasons),
     summary: row.summary,
+    summarySource: row.summary_source === "ai" ? "ai" : "rules",
     hasPassword: Boolean(row.pass_hash),
     oneTime: flag(row.is_one_time),
     hideBrand: flag(row.hide_brand),
@@ -784,7 +791,8 @@ async function passwordMatches(password: string, row: LinkRow) {
 }
 
 function parseExpiry(value: string | undefined): Expiry {
-  if (value === "ONE_VIEW" || value === "ONE_HOUR" || value === "ONE_DAY" || value === "SEVEN_DAYS") return value;
+  if (value === "ONE_VIEW" || value === "ONE_HOUR" || value === "ONE_DAY" || value === "SEVEN_DAYS")
+    return value;
   return "SEVEN_DAYS";
 }
 
@@ -805,12 +813,16 @@ async function visitor() {
       request.headers.get("cf-ipcountry") ||
       ""
     ).toUpperCase();
-    const country = /^[A-Z]{2}$/.test(raw) && raw !== "XX" && raw !== "T1" ? (COUNTRIES[raw] ?? raw) : "Unattributed";
+    const country =
+      /^[A-Z]{2}$/.test(raw) && raw !== "XX" && raw !== "T1"
+        ? (COUNTRIES[raw] ?? raw)
+        : "Unattributed";
     const ua = (request.headers.get("user-agent") || "").toLowerCase();
     let device = "Desktop";
     if (!ua) device = "Unknown";
     else if (/bot|spider|crawler|preview/.test(ua)) device = "Bot";
-    else if (/ipad|tablet/.test(ua) || (/android/.test(ua) && !/mobile/.test(ua))) device = "Tablet";
+    else if (/ipad|tablet/.test(ua) || (/android/.test(ua) && !/mobile/.test(ua)))
+      device = "Tablet";
     else if (/mobi|iphone|ipod|android/.test(ua)) device = "Phone";
     return { country, device };
   } catch {
@@ -829,11 +841,14 @@ async function ownerOk(code: string, secret: string) {
 }
 
 export async function scan(url: string): Promise<ScanPayload | Fail> {
-  if (!(await allow("scan", 20))) return limited();
+  if (!(await allowRateLimitedRequest("scan", 20))) return limited();
   try {
     return toScan(await inspect(url));
   } catch (error) {
-    return { ok: false, error: error instanceof GatewayError ? error.message : "That link couldn't be scanned." };
+    return {
+      ok: false,
+      error: error instanceof GatewayError ? error.message : "That link couldn't be scanned.",
+    };
   }
 }
 
@@ -844,19 +859,22 @@ export async function create(input: {
   expiry?: string;
   hideBrand?: boolean;
 }): Promise<CreatePayload | Fail> {
-  if (!(await allow("create", 20))) return limited();
+  if (!(await allowRateLimitedRequest("create", 20))) return limited();
   let inspected: Inspected;
   try {
     inspected = await inspect(input.url);
   } catch (error) {
-    return { ok: false, error: error instanceof GatewayError ? error.message : "That link couldn't be saved." };
+    return {
+      ok: false,
+      error: error instanceof GatewayError ? error.message : "That link couldn't be saved.",
+    };
   }
   const expiry = parseExpiry(input.expiry);
   const password = (input.password ?? "").normalize("NFKC").trim();
   if (password && (password.length < 4 || password.length > 72)) {
     return { ok: false, error: "Use a password between 4 and 72 characters." };
   }
-  const custom = (input.customCode ?? "").trim().toLowerCase();
+  const custom = (input.customCode ?? "").trim().toLowerCase().replace(/\s+/g, "-");
   if (custom && (!CODE_RE.test(custom) || RESERVED.has(custom))) {
     return { ok: false, error: "Use 3–32 letters, numbers, or hyphens for a custom name." };
   }
@@ -868,7 +886,9 @@ export async function create(input: {
       const bytes = randomBytes(6);
       let next = "";
       for (let i = 0; i < 6; i += 1) next += ALPHABET[bytes[i]! % ALPHABET.length];
-      const taken = await sql<{ code: string }>`select code from links where code = ${next} limit 1`;
+      const taken = await sql<{
+        code: string;
+      }>`select code from links where code = ${next} limit 1`;
       if (!taken.length && !RESERVED.has(next)) {
         code = next;
         break;
@@ -880,20 +900,23 @@ export async function create(input: {
   }
   if (!code) return { ok: false, error: "Couldn't reserve a short name. Try again." };
   const salt = password ? randomBytes(16).toString("hex") : null;
-  const passHash = password && salt ? scryptSync(password, salt, 32, { N: 16384, r: 8, p: 1 }).toString("hex") : null;
+  const passHash =
+    password && salt
+      ? scryptSync(password, salt, 32, { N: 16384, r: 8, p: 1 }).toString("hex")
+      : null;
   const ownerSecret = randomBytes(18).toString("base64url");
   const ownerHash = createHash("sha256").update(ownerSecret).digest("hex");
   const when = expiryDate(expiry);
   await sql`
     insert into links (
       code, url, title, description, image, favicon, hostname, path, chain,
-      tracker_count, risk, reasons, summary, pass_hash, pass_salt, owner_hash,
+      tracker_count, risk, reasons, summary, summary_source, pass_hash, pass_salt, owner_hash,
       expiry_at, is_one_time, consumed, clicks, hide_brand, unverified
     ) values (
       ${code}, ${inspected.url}, ${inspected.title}, ${inspected.description},
       ${inspected.image}, ${inspected.favicon}, ${inspected.hostname}, ${inspected.path},
       ${JSON.stringify(inspected.chain)}, ${inspected.trackerCount}, ${inspected.risk},
-      ${JSON.stringify(inspected.reasons)}, ${inspected.summary}, ${passHash}, ${salt},
+      ${JSON.stringify(inspected.reasons)}, ${inspected.summary}, ${inspected.summarySource}, ${passHash}, ${salt},
       ${ownerHash}, ${when.toISOString()}::timestamptz, ${expiry === "ONE_VIEW"}, false, 0,
       ${Boolean(input.hideBrand)}, ${inspected.unverified}
     )
@@ -927,8 +950,11 @@ export async function gateway(code: string): Promise<GatewayResult> {
   return classify(code.toLowerCase());
 }
 
-export async function unlock(code: string, password: string): Promise<{ ok: true; view: GatewayReady } | Fail> {
-  if (!(await allow("unlock", 20))) return limited();
+export async function unlock(
+  code: string,
+  password: string,
+): Promise<{ ok: true; view: GatewayReady } | Fail> {
+  if (!(await allowRateLimitedRequest("unlock", 20))) return limited();
   const normalized = code.toLowerCase();
   if (lockedOut(normalized)) return { ok: false, error: "Too many attempts. Wait ten minutes." };
   const row = await readLink(normalized);
@@ -944,7 +970,7 @@ export async function unlock(code: string, password: string): Promise<{ ok: true
 }
 
 export async function openGateway(code: string, password?: string): Promise<ContinuePayload> {
-  if (!(await allow("open", 30))) return limited();
+  if (!(await allowRateLimitedRequest("open", 30))) return limited();
   const normalized = code.toLowerCase();
   if (normalized === "demo-safe") {
     return { ok: true, url: "https://en.wikipedia.org/wiki/URL", blocked: false };
@@ -957,7 +983,8 @@ export async function openGateway(code: string, password?: string): Promise<Cont
     await purge(normalized);
     return { ok: false, error: "This gateway expired and was deleted." };
   }
-  if (flag(row.consumed) || !row.url) return { ok: false, error: "This gateway already opened and deleted itself." };
+  if (flag(row.consumed) || !row.url)
+    return { ok: false, error: "This gateway already opened and deleted itself." };
   if (row.pass_hash) {
     if (!(await passwordMatches(password ?? "", row))) {
       noteFail(normalized);
@@ -966,7 +993,7 @@ export async function openGateway(code: string, password?: string): Promise<Cont
     passFails.delete(normalized);
   }
   const destination = row.url;
-  const key = `${await clientKey()}:${normalized}`;
+  const key = `${await requestClientKey()}:${normalized}`;
   const now = Date.now();
   const recent = now - (seenClicks.get(key) ?? 0) < 4000;
   if (!recent) {
@@ -996,8 +1023,11 @@ export async function openGateway(code: string, password?: string): Promise<Cont
   return { ok: true, url: destination, blocked: false };
 }
 
-export async function analytics(code: string, ownerSecret: string): Promise<AnalyticsPayload | Fail> {
-  if (!(await allow("stats", 30))) return limited();
+export async function analytics(
+  code: string,
+  ownerSecret: string,
+): Promise<AnalyticsPayload | Fail> {
+  if (!(await allowRateLimitedRequest("stats", 30))) return limited();
   const normalized = code.toLowerCase();
   const row = await ownerOk(normalized, ownerSecret);
   if (!row) return { ok: false, error: "That management key doesn't match this gateway." };
@@ -1027,7 +1057,7 @@ export async function analytics(code: string, ownerSecret: string): Promise<Anal
 }
 
 export async function destroy(code: string, ownerSecret: string): Promise<{ ok: true } | Fail> {
-  if (!(await allow("destroy", 20))) return limited();
+  if (!(await allowRateLimitedRequest("destroy", 20))) return limited();
   const normalized = code.toLowerCase();
   const row = await ownerOk(normalized, ownerSecret);
   if (!row) return { ok: false, error: "That management key doesn't match this gateway." };

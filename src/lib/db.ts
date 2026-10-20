@@ -5,10 +5,8 @@ export type DbSource = "neon" | "pglite";
 
 // An empty/whitespace DATABASE_URL (an easy misconfig in deploy UIs) must mean
 // "unset" — otherwise production would silently run on the PGLite fallback.
-const rawDatabaseUrl =
-  typeof process !== "undefined" ? process.env.DATABASE_URL : undefined;
-const databaseUrl =
-  rawDatabaseUrl && rawDatabaseUrl.trim() ? rawDatabaseUrl : undefined;
+const rawDatabaseUrl = typeof process !== "undefined" ? process.env.DATABASE_URL : undefined;
+const databaseUrl = rawDatabaseUrl && rawDatabaseUrl.trim() ? rawDatabaseUrl : undefined;
 
 /**
  * Active backend: real **Neon** when `DATABASE_URL` is set (deployed / configured
@@ -27,14 +25,8 @@ export const dbSource: DbSource = databaseUrl ? "neon" : "pglite";
  *   const rows2 = await sql.query("select * from todos where id = $1", [id]);
  */
 export interface Sql {
-  <T = Record<string, unknown>>(
-    strings: TemplateStringsArray,
-    ...values: unknown[]
-  ): Promise<T[]>;
-  query<T = Record<string, unknown>>(
-    text: string,
-    params?: unknown[],
-  ): Promise<T[]>;
+  <T = Record<string, unknown>>(strings: TemplateStringsArray, ...values: unknown[]): Promise<T[]>;
+  query<T = Record<string, unknown>>(text: string, params?: unknown[]): Promise<T[]>;
 }
 
 /**
@@ -48,6 +40,7 @@ const globalRef = globalThis as typeof globalThis & {
   __pgSqlPromise__?: Promise<Sql>;
   __pgliteInstance__?: Promise<import("@electric-sql/pglite").PGlite>;
   __pgliteMigrateChain__?: Promise<void>;
+  __pgliteMigrationSignature__?: string;
 };
 
 /**
@@ -125,46 +118,46 @@ async function createPgliteSql(): Promise<Sql> {
     return pg;
   })().catch((err) => {
     globalRef.__pgliteInstance__ = undefined;
+    globalRef.__pgliteMigrationSignature__ = undefined;
     throw err;
   });
   const pg = await globalRef.__pgliteInstance__;
 
-  // Apply migrations/ (the single schema source) so preview matches production.
-  // SQL is inlined by the bundler via import.meta.glob (no runtime fs); applied
-  // files are tracked in _migrations. The glob does not descend, so the opt-in
-  // auth schema under migrations/auth/ stays out. Runs once per module instance
-  // — so an HMR reload after adding a migration file applies it live — with
-  // passes serialized on a global chain so concurrent callers never
-  // double-apply.
-  const migrate = async (): Promise<void> => {
-    const migrations = import.meta.glob("/migrations/*.sql", {
-      query: "?raw",
-      import: "default",
-      eager: true,
-    }) as Record<string, string>;
-    const doneRows = await pg.query<{ name: string }>(
-      "select name from _migrations",
-    );
-    const done = doneRows.rows.map((r) => r.name);
-    for (const { name, path } of pendingMigrations(Object.keys(migrations), done)) {
-      // Apply + record atomically (parity with scripts/migrate.mjs) so a failed
-      // statement can't leave a file half-applied but untracked.
-      await pg.transaction(async (tx) => {
-        await tx.exec(migrations[path]);
-        await tx.query("insert into _migrations (name) values ($1)", [name]);
-      });
-    }
-  };
-  const pass = (globalRef.__pgliteMigrateChain__ ?? Promise.resolve())
-    .catch(() => undefined) // an earlier failed pass must not wedge the chain
-    .then(migrate);
-  globalRef.__pgliteMigrateChain__ = pass;
-  await pass;
+  await applyPgliteMigrations(pg);
 
   return toSql(async <T>(text: string, params: unknown[]) => {
     const result = await pg.query<T>(text, params);
     return result.rows;
   });
+}
+
+async function applyPgliteMigrations(pg: import("@electric-sql/pglite").PGlite) {
+  const migrations = import.meta.glob("/migrations/*.sql", {
+    query: "?raw",
+    import: "default",
+    eager: true,
+  }) as Record<string, string>;
+  const signature = Object.keys(migrations).sort().join("\0");
+  if (globalRef.__pgliteMigrationSignature__ === signature) return;
+
+  const migrate = async (): Promise<void> => {
+    if (globalRef.__pgliteMigrationSignature__ === signature) return;
+    const doneRows = await pg.query<{ name: string }>("select name from _migrations");
+    const done = doneRows.rows.map((r) => r.name);
+    for (const { name, path } of pendingMigrations(Object.keys(migrations), done)) {
+      await pg.transaction(async (tx) => {
+        await tx.exec(migrations[path]);
+        await tx.query("insert into _migrations (name) values ($1)", [name]);
+      });
+    }
+    globalRef.__pgliteMigrationSignature__ = signature;
+  };
+
+  const pass = (globalRef.__pgliteMigrateChain__ ?? Promise.resolve())
+    .catch(() => undefined) // an earlier failed pass must not wedge the chain
+    .then(migrate);
+  globalRef.__pgliteMigrateChain__ = pass;
+  await pass;
 }
 
 let sqlPromise: Promise<Sql> | null = null;
@@ -186,12 +179,18 @@ async function createSql(): Promise<Sql> {
  * Schema comes from `migrations/*.sql`, auto-applied before the first query on
  * both backends — define tables there, never inline in server functions.
  */
-export function getSql(): Promise<Sql> {
+export async function getSql(): Promise<Sql> {
   sqlPromise ??= createSql().catch((err) => {
     sqlPromise = null; // don't memoize failures — let the next call retry
     throw err;
   });
-  return sqlPromise;
+  const sql = await sqlPromise;
+  if (dbSource === "pglite") {
+    const pg = await globalRef.__pgliteInstance__;
+    if (!pg) throw new Error("PGLite instance failed to initialize");
+    await applyPgliteMigrations(pg);
+  }
+  return sql;
 }
 
 /**
